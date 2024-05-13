@@ -1,0 +1,52 @@
+import json
+import boto3
+import base64
+import re
+
+
+
+def lambda_handler(event, context):
+
+    eventBody = json.loads(json.dumps(event))['body']
+    imageBase64 = json.loads(eventBody)['Image']
+
+    # Amazon Textract client
+    textract = boto3.client('textract')
+    
+    # Call Amazon Textract
+    response = textract.detect_document_text(
+        Document={
+            'Bytes': base64.b64decode(imageBase64)
+        })
+        
+    detectedText = ''
+    dictionary_send = {}
+    
+     
+    # Print detected text
+    for item in response['Blocks']:
+        if item['BlockType'] == 'LINE':
+            detectedText += item['Text'] + '\n'
+            
+    temp_lst = list(detectedText.split('\n'))
+    
+    for index, element in enumerate(temp_lst):
+        if (re.match('N.MERO', element)):
+            id_number = temp_lst[index]
+            dictionary_send['id_person'] = re.split('N.MERO', element)[1]
+        if (element == 'APELLIDOS'):
+            apellido_1 = temp_lst[index -1]
+            print('Prueba', apellido_1)
+            dictionary_send['surname_person'] = apellido_1
+        if (element == 'NOMBRES'):
+            nombre_1 = temp_lst[index -1]
+            print('Prueba', apellido_1)
+            dictionary_send['name_person'] = nombre_1
+        
+    json_person_info = json.dumps(dictionary_send)
+    
+    
+    return {
+        'statusCode': 200,
+        'body': json_person_info
+    }
