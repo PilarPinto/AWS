@@ -1,0 +1,24 @@
+import json
+import boto3
+from botocore.exceptions import ClientError
+
+EC2_RESOURCE = boto3.resource('ec2')
+AMI_ID = 'ami-7105540e'
+
+
+
+
+def lambda_handler(event, context):
+    # TODO implement
+    try:
+        image = EC2_RESOURCE.Image(AMI_ID)
+        image.deregister()
+        print(f'AMI {AMI_ID} successfully deregistered')
+    except ClientError as e:
+        msg = e.response.get('Error', {}).get('Message', e)
+        print(msg)
+    
+    return {
+        'statusCode': 200,
+        'body': json.dumps('Hello from Lambda!')
+    }
