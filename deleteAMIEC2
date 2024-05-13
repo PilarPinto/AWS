@@ -1,0 +1,131 @@
+mport json
+import boto3
+from botocore.exceptions import ClientError
+
+
+client_autoscaling = boto3.client('autoscaling')
+ec2_client = boto3.client('ec2')
+ec2_resource = boto3.resource('ec2')
+
+
+def instance_by_autoscaling_groups(response_autoscaling):
+    '''
+    Group the  Auto Scaling Groups by instance id
+    Params: JSON  Auto Scaling Group response
+    Return: Success dictionary with Auto Scaling Group names as a keys
+    with the respective first instance id as Value, else empty dict
+    '''
+    ag_instances = {}
+    autoscaling_groups = response_autoscaling.get('AutoScalingGroups')
+    
+    # Create dictionary
+    if autoscaling_groups:
+        for item in autoscaling_groups:
+            ag_name = item.get('AutoScalingGroupName')
+            instances_in_ag = item.get('Instances')
+            if instances_in_ag:
+                first_instance = instances_in_ag[0]
+                if first_instance:
+                    first_instance_id = first_instance.get('InstanceId')
+            if ag_name:
+                ag_instances[ag_name] = first_instance_id
+    return(ag_instances)
+
+
+def find_ami_by_instance(description, ag_instance_id):
+    '''
+    Find the Image ID using the instance description
+    Params: JSON description and the id of a instance
+    Return: Image ID
+    '''
+    ami_id = None
+    for reservation in description:
+        for instance in reservation['Instances']:
+            if instance.get("InstanceId") == ag_instance_id :
+                ami_id = instance.get("ImageId")
+    return(ami_id)
+
+
+def deregister_ami(ami_id):
+    '''
+    Deregister an AMI by its identificator
+    Params: ami id
+    Return: deregister message, it depends if AMI exists, 
+            or if it is an AWS AMI or even the AMI does not exists
+    '''
+    deregister_msg = ''
+    try:
+        image = ec2_resource.Image(ami_id)
+        image.deregister()
+        deregister_msg = f'AMI {ami_id} successfully deregistered'
+        print(f'AMI {ami_id} successfully deregistered')
+    except ClientError as e:
+        msg = e.response.get('Error', {}).get('Message', e)
+        deregister_msg = msg
+        print(msg)
+    return deregister_msg
+        
+
+def check_ami_used_ag(ag_instances, ami_id, instances_description):
+    '''
+    Check if the event AMI is used by an Auto Scaling Group
+    Params: dictionary of  Auto Scaling Groups and input ami id
+    Return: ami_is_used = True, if the input ami is used by an a Auto Scaling Group
+    '''
+    ami_is_used = False
+    ag_related = ''
+    for ag, ins_id in ag_instances.items():
+        ami_instance = find_ami_by_instance(instances_description, ins_id)
+        if ami_instance == ami_id:
+            ami_is_used = True
+            ag_related = ag
+    return ami_is_used, ag_related
+            
+
+
+
+def lambda_handler(event, context):
+    '''
+    Main Lambda function to check if an AMI can be deregister, so it 
+    calls the deregister function when an AMI is not used by an Auto Scaling Group
+    Input: AMI id in the event
+    Return: A message that shows if an AMI can be deregistered. 
+            Success deregister when AMI is not used by an Auto Scaling Group
+            Alert when the input AMI belongs to a deregister group
+            
+    '''
+    lambda_response = ''
+    
+    #client definitions 
+    response_autoscaling = client_autoscaling.describe_auto_scaling_groups()
+    instances_description = ec2_client.describe_instances().get("Reservations")
+
+    #input ami
+    ami_id = event.get('ami_id')
+    
+    if ami_id:
+ 
+        #dictionary of  Auto Scaling Groups
+        ag_instances = instance_by_autoscaling_groups(response_autoscaling)
+        
+        # check if a ami is used by an Auto Scaling Group
+        ami_is_used, ag_related = check_ami_used_ag(ag_instances, ami_id, instances_description)
+    
+    
+        
+        #deregister when AMI is not used by an Auto Scaling Group
+        if ami_is_used == False:
+            deregister_msg = deregister_ami(ami_id)
+            lambda_response = f'The AMI: {ami_id}, is not used by any Auto Scaling Group.'\
+                                f' Also, {deregister_msg}'
+        else:
+            lambda_response = f'The AMI: {ami_id}, is used by the Auto Scaling'\
+                                f' Group: {ag_related}. So you must not deregister it'
+    else:
+        lambda_response = 'The input JSON does not contain the input AMI ID parameter'
+
+
+    return {
+        'statusCode': 200,
+        'body': json.dumps(lambda_response)
+    }
