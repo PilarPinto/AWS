@@ -1,0 +1,39 @@
+import json
+import boto3
+import re
+import os
+
+MY_SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
+print(MY_SNS_TOPIC_ARN)
+
+def lambda_handler(event, context):
+
+    print(event)
+    
+    changes_json = event["detail"]["requestParameters"]["changeBatch"]["changes"]
+    
+    flag = False
+    for item in changes_json:
+        if item["action"] == "DELETE":
+            if (re.match('.*\.acm-validations\.aws.', item["resourceRecordSet"]["resourceRecords"][0]["value"])):
+                flag = True
+                subdomain_name = item["resourceRecordSet"]["name"]
+                
+    
+    # Send message to SNS
+    
+    if flag == True:
+        sns_client = boto3.client('sns')
+        sns_client.publish(
+            TopicArn = MY_SNS_TOPIC_ARN,
+            Subject = 'Delete subdomain: ' + subdomain_name,
+            Message = 'Subdomain: ' + subdomain_name + ' has been deleted' 
+            )
+  
+   
+    
+    
+    return {
+        'statusCode': 200,
+        'body': subdomain_name
+    }
